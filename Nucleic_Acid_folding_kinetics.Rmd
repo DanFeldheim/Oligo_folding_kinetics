@@ -1,0 +1,341 @@
+---
+title: 'Kinetic Analysis: 20171018'
+author: 'Analyst: '
+date: "September 16, 2017"
+output:
+  slidy_presentation: default
+  ioslides_presentation: default
+---
+
+```{r global_options setup, include=FALSE, results="hide"}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+
+```{r echo = FALSE, results="hide"}
+# Calculation of rate constants for folding and unfolding and Tm from kinetic data
+# Must have TWO columns only in csv file, labeled temp and abs (e.g., cool curve from Agilent spectrometer must be pasted onto the end of the heat curve.) Program automatically separates the heat and cool curves for kinetic analysis. 
+# Input sample name and filename in lines 21 and 22. 
+# Input temperature ramp rate in degrees C/min in line 25.
+# Input temperature range to be analyzed in Kelvin in lines 28 and 29. 
+# Press Knit
+
+sample <- "20171018 Sample A"
+Filename <- read.csv("[Path and File]", header = T)
+
+# Input temperature ramp rate in degrees C/min
+ramprate <- 0.5
+
+# Input temperature range for data analysis in Celsius
+lowertemp <- 20
+uppertemp <- 90
+
+# Create time column using temperature column and ramp rate
+ramp <- ramprate/60
+
+# Keeps abs column unchanged while taking absolute value of the difference between every row in temp column.
+Filename$tempcorr <- abs(ave(Filename$temp, FUN=function(x) c(0, diff(x))))
+
+# While statement for adding rows in increments of a number (temp difference). Makes a running total of time.
+maxrow <- nrow(Filename)
+n = 1
+Filename$time[1] = 0
+while(n < maxrow) {
+  n = n + 1
+  Filename$time[n] = Filename$time[n-1] + (Filename$tempcorr[n]/ramp)
+}
+```
+
+### Absorbance vs. Temperature
+```{r echo=FALSE, results="hide"}
+# Plot Absorbance vs. Temp.
+plot(Filename$temp,Filename$abs, 
+     main = sample,
+     col = "green",
+     pch = 20,
+     ylab = "Absorbance",
+     xlab = expression(paste("Temperature (", degree, "C)")))
+```
+
+
+```{r echo=FALSE, results="hide"}
+# Select all data points between the upper and lower temperatures
+temp.sub <- subset(Filename, temp > lowertemp & temp < uppertemp)
+
+# Add a column in dataframe with temps in kelvin and delete columns with NA (if necessary)
+temp.sub$kelvindata <- (temp.sub$temp + 273.15)
+
+# Separate heating and cooling curves
+# Find the point where the melt curve reverses; the max temperature
+scanrev <- temp.sub[which.max(temp.sub$kelvindata), ]
+
+# Create a new dataframe of all points prior to the time of the scan reversal (the heat curve)
+heatcurve <- temp.sub[which(temp.sub$time <= scanrev$time[1]),]
+
+# plot(heatcurve$kelvindata, heatcurve$abs,
+     # main = sample,
+     # col = "green",
+     # pch = 20,
+     # ylab = "Absorbance",
+     # xlab = "Temperature (K)")
+```
+
+
+```{r echo = FALSE, results="hide"}
+# Create a new dataframe of all points following the time of the scan reversal (the cool curve)
+coolcurve <- temp.sub[which(temp.sub$time > scanrev$time[1]),]
+
+# plot(coolcurve$kelvindata, coolcurve$abs,
+    # main = sample,
+    # col = "purple",
+    # pch = 20,
+    # ylab = "Absorbance",
+    # xlab = "Temperature (K)")
+
+# Calculate and plot fraction hybridized as a function of temp
+# Identify first and last point for calculation of % Hybed for heat step. Extract largest absorbance value for last point.
+heatlowpt <- heatcurve[1, 2]
+heathighpt <- tail(heatcurve$abs, n = 1)
+
+# Calculate fraction hybed for the heat curve
+heatFractionHybridized <- (heathighpt - heatcurve$abs)/(heathighpt - heatlowpt)
+
+# Create new temp vs fraction hybed data frame.
+heatFraction.df <- data.frame(kelvin = heatcurve$kelvindata, time = heatcurve$time, heatFraction.Hybridized = heatFractionHybridized)
+
+# plot(heatFraction.df$kelvin, heatFraction.df$heatFraction.Hybridized, 
+    # main = sample,
+    # col = "red",
+    # pch = 20,
+    # ylab = "Fraction Hybridized",
+    # xlab = "Temperature (K)")
+```
+
+```{r echo = FALSE, results="hide"}
+# Calculate fraction hybed for the cool curve
+# Identify first and last point for calculation of % Hybed for cool step.
+coolhighpt <- coolcurve[1, 2]
+coollowpt <- tail(coolcurve$abs, n = 1)
+
+# Calculate fraction hybed for the cool curve
+coolFractionHybridized <- (coolhighpt - coolcurve$abs)/(coolhighpt - coollowpt)
+
+# Create new temp vs fraction hybed data frame.
+coolFraction.df <- data.frame(kelvin = coolcurve$kelvindata, time = coolcurve$time, coolFraction.Hybridized = coolFractionHybridized)
+
+# plot(coolFraction.df$kelvin, coolFraction.df$coolFraction.Hybridized, 
+    # main = sample,
+    # col = "green",
+    # pch = 20,
+    # ylab = "Fraction Hybridized",
+    # xlab = "Temperature (K)")
+
+# Calculate khyb and kdenature from the two equations
+# d(fractionhybed,heating)/dt = khyb*fractionhybed,heating - kden*(1-fractionhybed,heating) and
+# d(fractoinhybed,cooling)/dt = khyb*fractionhybed,cooling - kden (1-fractionhybed, cooling)
+
+# Create new time, fraction hybed, and kelvin data frame for the heat step. Must create new dataframe because of the derivative step below.
+heatFractionTime.df <- data.frame(time = heatFraction.df$time, kelvin = heatFraction.df$kelvin, heatFractionHybridized = heatFraction.df$heatFraction.Hybridized)
+
+# Construct new dataframe called heatderiv.
+# Calculate dfraction hybed/dtime for the heat step
+heatCurveDerivative <- diff(heatFractionTime.df$heatFractionHybridized)/diff(heatFractionTime.df$time)
+
+# Centers the time values
+timeCenter <- rowMeans(embed(heatFractionTime.df$time,2)) 
+
+# Creates a new data table from timeCenter and heatCurveDerivative
+heatCurveDerivative.df <- data.frame(time = timeCenter, dheatdt = heatCurveDerivative) 
+
+# Make fraction hybed column same size as heatderiv columns
+heatFractionHybed <- rowMeans(embed(heatFractionTime.df$heatFractionHybridized,2))
+
+# Add fraction hybridized column to heatderiv
+heatCurveDerivative.df[, "heatFractionHybridized"] <- heatFractionHybed
+
+# Make temperature column same size as heatCurveDerivative.df
+heatTempFix <- rowMeans(embed(heatFractionTime.df$kelvin,2))
+
+# Add tempfix column
+heatCurveDerivative.df[, "Kelvin"] <- heatTempFix
+
+# Generate 1-fraction hybridized data and add to heatCurveDerivative.df
+oneMinusHeathybed <- 1-heatCurveDerivative.df$heatFractionHybridized
+
+heatCurveDerivative.df[, "1-heatFractionHybridized"] <- oneMinusHeathybed
+
+# Round KelvinTemp so that temps on the heat curve match temps on the cool curve. Must be done in order to solve the two simultaneous equations that determine the folding and denaturing rate constants.
+heatCurveDerivative.df[, "roundedKelvin"] <- round(heatCurveDerivative.df$Kelvin, 0)
+
+# Group rows in heatderiv with the same rounded kelvin temp and average the other variables
+# This is the heat curve dataframe that will be merged with the cool curve dataframe for calculation of rate constants
+aggHeatData <- aggregate(heatCurveDerivative.df, by = list(heatCurveDerivative.df$roundedKelvin), FUN=max, na.rm=TRUE)
+aggHeatData[,1] <- NULL
+
+# Create the analogous aggregated dataframe for the cool curve
+# Create new time vs fraction hybed data frame for the cool step.
+coolFractionTime.df <- data.frame(time = coolFraction.df$time, kelvin = coolFraction.df$kelvin, coolFractionHybridized = coolFraction.df$coolFraction.Hybridized)
+
+# Construct new dataframe called coolderiv with dfrac/dt, frachybed, temp and time.
+# Calculate dfraction hybed/dtime for the cool step
+coolCurveDerivative <- diff(coolFractionTime.df$coolFractionHybridized)/diff(coolFractionTime.df$time)
+
+# Centers the time values
+timeCenter <- rowMeans(embed(coolFractionTime.df$time,2)) 
+
+# Creates a new data table from timeCenter and coolCurveDerivative
+coolCurveDerivative.df <- data.frame(time = timeCenter, dcooldt = coolCurveDerivative) 
+
+# Make fraction hybed column same size as coolderiv columns
+coolFractionHybed <- rowMeans(embed(coolFractionTime.df$coolFractionHybridized,2))
+
+# Add fraction hybridized column to coolderiv
+coolCurveDerivative.df[, "coolFractionHybridized"] <- coolFractionHybed
+
+# Make temperature column same size as coolCurveDerivative.df
+coolTempFix <- rowMeans(embed(coolFractionTime.df$kelvin,2))
+
+# Add tempfix column
+coolCurveDerivative.df[, "Kelvin"] <- coolTempFix
+
+# Generate 1-fraction hybridized data and add to coolCurveDerivative.df
+oneMinusCoolhybed <- 1-coolCurveDerivative.df$coolFractionHybridized
+coolCurveDerivative.df[, "1-coolFractionHybridized"] <- oneMinusCoolhybed
+
+# Round KelvinTemp so that temps on the heat curve match temps on the cool curve. Must be done in order to solve the two simultaneous equations that determine the folding and denaturing rate constants.
+coolCurveDerivative.df[, "roundedKelvin"] <- round(coolCurveDerivative.df$Kelvin, 0)
+
+# Group rows in coolCurveDerivative with the same rounded kelvin temp and average the other variables
+# This is the cool curve dataframe that will be merged with the heat curve dataframe for calculation of rate constants
+aggCoolData <- aggregate(coolCurveDerivative.df, by = list(coolCurveDerivative.df$roundedKelvin), FUN=max, na.rm=TRUE)
+aggCoolData[,1] <- NULL
+
+
+# Merge aggCoolData and aggHeatData
+# Load plyr package; rbind combines columns and inserts NA in empty cells
+
+library("plyr")
+kineticCombined <- rbind.fill(aggCoolData[c("roundedKelvin", "coolFractionHybridized", "1-coolFractionHybridized", "dcooldt")], aggHeatData[c("roundedKelvin", "heatFractionHybridized", "1-heatFractionHybridized", "dheatdt")])
+
+# Collapse the data so that data at the same temps are listed in the same rows. kineticData has all of the data necessary for calculating khyb and kmelt.
+kineticData <- aggregate(kineticCombined, by = list(kineticCombined$roundedKelvin), FUN = max, na.rm=TRUE)
+kineticData$Group.1 <- NULL
+kineticData <- kineticData[is.finite(rowSums(kineticData)),]
+
+# Calculate khyb
+khyb <- ((kineticData$`1-heatFractionHybridized`)*(kineticData$dcooldt)-(kineticData$dheatdt)*(kineticData$`1-coolFractionHybridized`))/((kineticData$`1-heatFractionHybridized`)*(kineticData$coolFractionHybridized) - (kineticData$`1-coolFractionHybridized`)*(kineticData$heatFractionHybridized))
+
+# Add khyb to kineticData dataframe
+kineticData[, "khyb"] <- khyb
+
+# Calculate lnkhyb and add to kineticData
+lnkhyb <- log(khyb)
+kineticData[, "lnkhyb"] <- lnkhyb
+                           
+# Calculate kdenature
+kden <- -((kineticData$dheatdt - kineticData$khyb*kineticData$heatFractionHybridized)/kineticData$`1-heatFractionHybridized`)
+
+# Add kden to kineticData dataframe
+kineticData[, "kden"] <- kden
+# Calculate lnkden and add to kineticData
+lnkden <- log(kden)
+kineticData[, "lnkden"] <- lnkden
+
+# Remove all NaN
+kineticData <- kineticData[is.finite(kineticData$lnkhyb) & is.finite(kineticData$lnkden), ]
+                           
+# Plot ln(khyb) and ln(kden) vs. 1/T in R and perform linear regression. Must be in the order: plot, abline, plot, abline to give correct regression lines. 
+kineticData$invT <- 1/kineticData$roundedKelvin
+```
+
+# lnk vs. 1/Temperature
+```{r echo = FALSE, results="hide"}
+# Plot the lnk with the largest spread in y axis values first. If the lnk with the smallest spread in y values is plotted first then the other ln k data will have points that do not appear in the plot.  
+
+if(abs(max(kineticData$lnkden)) > abs(max(kineticData$lnkhyb))) {
+  plot(kineticData$invT, kineticData$lnkden, 
+       main = sample,
+       col = "green",
+       pch = 20,
+       ylab = "ln(k)",
+       xlab = "1/Temperature (K)")
+  
+  abline(lm(kineticData$lnkden ~ kineticData$invT), col = "blue")
+  
+  par(new = TRUE)
+  plot(kineticData$invT, kineticData$lnkhyb, axes = FALSE, xlab = "", ylab = "")
+  abline(lm(kineticData$lnkhyb ~ kineticData$invT), col = "red")
+} else {
+  plot(kineticData$invT, kineticData$lnkhyb, 
+       main = sample,
+       col = "green",
+       pch = 20,
+       ylab = "ln(k)",
+       xlab = "1/Temperature (K)")
+  
+  abline(lm(kineticData$lnkhyb ~ kineticData$invT), col = "blue")
+  
+  par(new = TRUE)
+  plot(kineticData$invT, kineticData$lnkden, axes = FALSE, xlab = "", ylab = "")
+  abline(lm(kineticData$lnkden ~ kineticData$invT), col = "red")
+}
+
+# determine the temperature at which the two regression lines intersect. This is the Tm.
+hybReg <- lm(kineticData$lnkhyb ~ kineticData$invT)
+summary(hybReg)
+hybRegY <- as.numeric(coef(hybReg)[1])
+hybRegY
+hybReg.slope <- as.numeric(coef(hybReg)[2])
+hybReg.slope
+kineticData$hybabs <- (hybReg.slope*kineticData$invT) + hybRegY
+
+denReg <- lm(kineticData$lnkden ~ kineticData$invT)
+summary(denReg)
+denRegY <- as.numeric(coef(denReg)[1])
+denRegY
+denReg.slope <- as.numeric(coef(denReg)[2])
+denReg.slope
+kineticData$denabs <- (denReg.slope*kineticData$invT) + denRegY
+
+intersect <- (denRegY-hybRegY)/(hybReg.slope-denReg.slope)
+Tm <- round((1/intersect) - 273.15, 1)
+
+# Extract khyb and kden at 37 C.
+khyb37 <- round(kineticData$khyb[kineticData$roundedKelvin == 310], 4)
+kden37 <- round(kineticData$kden[kineticData$roundedKelvin == 310], 4)
+
+# Calculate activation energies for hybridization and melting
+activationEhyb <- hybReg.slope * -8.314
+activationEden <- denReg.slope * 8.314
+
+summarydf <- data.frame("Tm" = Tm, "khyb" = khyb37, "kmelt" = kden37, "Ea(hyb)" = activationEhyb, "Ea(melt)" = activationEden)
+
+
+# Calculate activation energies for hybridization and melting
+activationEhyb <- round(hybReg.slope * -0.008314, 1)
+activationEden <- round(denReg.slope * 0.008314, 1)
+#kinsummary <- data.frame("Tm" = Tm, "khyb" = khyb37, "kmelt" = kden37, "Ea(hyb)" = activationEhyb, "Ea(melt)" = activationEden)
+kinsummary <- data.frame(Tm, khyb37, kden37, activationEhyb, activationEden)
+```
+
+# Kinetic parameters and Tm
+```{r echo = FALSE, results = 'asis'}
+library(knitr)
+# Define the table
+table = matrix(NA, nrow = 1, ncol = 5)
+# Create an object of column names
+colnames(table) <- c("Tm (C)", "ka(1/sec)", "kd (1/sec)", "Ea, hyb (KJ/mol)", "Ea, melt (KJ/mol")
+# Use for vector (list) instead of data frame.
+#table[1,] = c(kinsummary["Tm"], kinsummary["khyb37"], kinsummary["kden37"], kinsummary["activationEhyb"], kinsummary["activationEden"])
+# Defines data from dataframe to be placed into each column
+table[1,] = c(kinsummary$Tm, kinsummary$khyb37, kinsummary$kden37, kinsummary$activationEhyb, kinsummary$activationEden)
+# Create an object for use as table caption
+tableCap <- "Kinetic Summary"
+# Print table
+kable(kinsummary, caption = tableCap, col.names = colnames(table), align = "c")
+```
+
+
+
+
+
